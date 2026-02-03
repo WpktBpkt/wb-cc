@@ -1,30 +1,23 @@
+/*! wb-cc (c) 2025 WpktBpkt - MIT */
 (function(){
   const ATTR = 'wb-cc';
   const ACTIONS = new Set([
-    'open-preferences',
-    'close',
-    'accept-all',
-    'accept-necessary',
-    'manager',
-    'save-preferences'
+    'open-preferences','close','accept-all','accept-necessary','manager','save-preferences'
   ]);
 
   const COOKIE_NAME = 'wbCookieConsent';
   const COOKIE_DAYS = 180;
-  const DEBUG = false; // bei Bedarf true
+  const DEBUG = false;
   const log = (...a)=>{ if (DEBUG) console.log('[wb-cc]', ...a); };
 
-  // Kategorien (Opt-In default)
-  let userConsent = {
-    marketing: false,
-    personalization: false,
-    analytics: false
-  };
+  // Opt-In default
+  let userConsent = { marketing:false, personalization:false, analytics:false };
 
-  // ---------- Utils ----------
+  // ---------- UI helpers ----------
   function show(sel){ const el = document.querySelector(sel); if (el) el.style.display = 'flex'; }
   function hide(sel){ const el = document.querySelector(sel); if (el) el.style.display = 'none'; }
 
+  // ---------- Cookie ----------
   function setCookie(name, value, days){
     const d = new Date(); d.setDate(d.getDate() + days);
     document.cookie = `${name}=${encodeURIComponent(value)}; expires=${d.toUTCString()}; path=/;`;
@@ -32,7 +25,7 @@
   }
   function getCookie(name){
     const parts = (document.cookie || '').split(';');
-    for(const part of parts){
+    for (const part of parts){
       const c = part.trim();
       if (c.indexOf(name + '=') === 0){
         const val = decodeURIComponent(c.substring(name.length + 1));
@@ -43,15 +36,41 @@
     log('getCookie miss', name);
     return null;
   }
+
+  // ---------- Google Consent Mode v2 Bridge ----------
+  function gtagConsentUpdateFrom(consent){
+    // payload aus deinen Kategorien mappen
+    const granted = v => v ? 'granted' : 'denied';
+    const payload = {
+      analytics_storage: granted(consent.analytics),
+      ad_storage: granted(consent.marketing),
+      ad_user_data: granted(consent.marketing),
+      ad_personalization: granted(consent.marketing || consent.personalization)
+    };
+    try {
+      // wenn gtag existiert → direkt updaten
+      if (typeof window.gtag === 'function') {
+        window.gtag('consent','update', payload);
+      } else {
+        // sonst in die dataLayer queue pushen (wird von gtag/gtm später verarbeitet)
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push(['consent','update', payload]);
+      }
+      log('consent mode update', payload);
+    } catch(e){ log('consent mode error', e); }
+  }
+
   function saveConsent(){
     setCookie(COOKIE_NAME, JSON.stringify(userConsent), COOKIE_DAYS);
     window.__wbConsent = userConsent; // debug helper
-    // Nach Speichern sofort Scripts & Iframes nachladen
+    // Consent Mode zuerst updaten …
+    gtagConsentUpdateFrom(userConsent);
+    // … dann erlaubte Ressourcen laden
     loadAllowedScripts(userConsent);
     loadAllowedIframes(userConsent);
   }
 
-  // --- Webflow Checkbox UI Sync (Toggle-Optik) ---
+  // ---------- Webflow toggle visual sync ----------
   function resolveCheckbox(el){
     if (!el) return null;
     if (el.matches && el.matches('input[type="checkbox"]')) return el;
@@ -95,7 +114,7 @@
     log('read from UI', userConsent);
   }
 
-  // --- Drittanbieter-SCRIPTS nur nach Consent laden ---
+  // ---------- Blocking engine ----------
   function parseCategories(attr){
     return (attr || '')
       .split(',')
@@ -129,11 +148,8 @@
       log('loaded 3rd script', s.src || '[inline]');
     });
   }
-
-  // --- IFRAMEs/Platzhalter nach Consent laden ---
   function loadAllowedIframes(consent){
-    // Variante A: Platzhalter-DIV -> echtes Iframe erzeugen
-    // findet Placeholder ohne reserviertes "type" (nur data-iframe-url + wb-cc-categories nötig)
+    // Platzhalter-DIV → echtes iframe
     const placeholders = document.querySelectorAll('[data-iframe-url][wb-cc-categories]');
     placeholders.forEach(el => {
       if (el.dataset.wbLoaded === '1') return;
@@ -161,7 +177,7 @@
       log('mounted iframe (placeholder)', url);
     });
 
-    // Variante B: echtes <iframe> ohne src, mit data-wb-cc-src -> src setzen
+    // natives <iframe> ohne src, mit data-wb-cc-src
     const blockedIframes = document.querySelectorAll('iframe[data-wb-cc-src][wb-cc-categories]');
     blockedIframes.forEach(ifr => {
       if (ifr.dataset.wbLoaded === '1') return;
@@ -177,7 +193,7 @@
     });
   }
 
-  // --- Forms im Prefs-Modal niemals submitten lassen ---
+  // ---------- Init ----------
   function makePreferenceButtonsNonSubmitting(){
     const prefs = document.querySelector('[wb-cc="preferences"]');
     if (!prefs) return;
@@ -186,75 +202,55 @@
     });
   }
 
-  // ---------- Init ----------
   document.addEventListener('DOMContentLoaded', function(){
     const raw = getCookie(COOKIE_NAME);
     if (raw){
       try { userConsent = JSON.parse(raw) || userConsent; } catch(e){ log('parse error', e); }
-      hide('[wb-cc="banner"]');
-      hide('[wb-cc="preferences"]');
-      // bereits erteilte Einwilligungen sofort umsetzen
+      hide('[wb-cc="banner"]'); hide('[wb-cc="preferences"]');
+      // Consent Mode sofort mit bestehender Auswahl updaten …
+      gtagConsentUpdateFrom(userConsent);
+      // … und erlaubte Ressourcen laden
       loadAllowedScripts(userConsent);
       loadAllowedIframes(userConsent);
     } else {
-      show('[wb-cc="banner"]');
-      hide('[wb-cc="preferences"]');
+      show('[wb-cc="banner"]'); hide('[wb-cc="preferences"]');
     }
     makePreferenceButtonsNonSubmitting();
   });
 
-  // Submits im Capture-Mode blocken (nur im Prefs-Modal)
   document.addEventListener('submit', function(e){
     if (e.target?.closest?.('[wb-cc="preferences"]')) {
-      e.preventDefault();
-      e.stopPropagation();
-      log('blocked submit');
+      e.preventDefault(); e.stopPropagation(); log('blocked submit');
     }
   }, true);
 
-  // ---------- Click-Delegation ----------
   document.addEventListener('click', function(e){
-    const el = e.target?.closest?.('[wb-cc]');
-    if (!el) return;
-
-    const action = el.getAttribute(ATTR);
-    if (!ACTIONS.has(action)) return; // Checkboxen etc. unberührt lassen
+    const el = e.target?.closest?.('[wb-cc]'); if (!el) return;
+    const action = el.getAttribute(ATTR); if (!ACTIONS.has(action)) return;
     e.preventDefault();
 
     if (action === 'open-preferences'){
-      hide('[wb-cc="banner"]');
-      syncPreferencesUIFromConsent();
-      show('[wb-cc="preferences"]');
+      hide('[wb-cc="banner"]'); syncPreferencesUIFromConsent(); show('[wb-cc="preferences"]');
     }
     if (action === 'manager'){
-      syncPreferencesUIFromConsent();
-      show('[wb-cc="preferences"]');
+      syncPreferencesUIFromConsent(); show('[wb-cc="preferences"]');
     }
     if (action === 'close'){
-      hide('[wb-cc="preferences"]');
-      hide('[wb-cc="banner"]');
+      hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'accept-all'){
-      userConsent.marketing = true;
-      userConsent.personalization = true;
-      userConsent.analytics = true;
+      userConsent = { marketing:true, personalization:true, analytics:true };
       saveConsent();
-      hide('[wb-cc="preferences"]');
-      hide('[wb-cc="banner"]');
+      hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'accept-necessary'){
-      userConsent.marketing = false;
-      userConsent.personalization = false;
-      userConsent.analytics = false;
+      userConsent = { marketing:false, personalization:false, analytics:false };
       saveConsent();
-      hide('[wb-cc="preferences"]');
-      hide('[wb-cc="banner"]');
+      hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'save-preferences'){
-      readPreferencesFromUI();
-      saveConsent();
-      hide('[wb-cc="preferences"]');
-      hide('[wb-cc="banner"]');
+      readPreferencesFromUI(); saveConsent();
+      hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
   });
 })();
