@@ -39,7 +39,6 @@
 
   // ---------- Google Consent Mode v2 Bridge ----------
   function gtagConsentUpdateFrom(consent){
-    // payload aus deinen Kategorien mappen
     const granted = v => v ? 'granted' : 'denied';
     const payload = {
       analytics_storage: granted(consent.analytics),
@@ -48,11 +47,9 @@
       ad_personalization: granted(consent.marketing || consent.personalization)
     };
     try {
-      // wenn gtag existiert → direkt updaten
       if (typeof window.gtag === 'function') {
         window.gtag('consent','update', payload);
       } else {
-        // sonst in die dataLayer queue pushen (wird von gtag/gtm später verarbeitet)
         window.dataLayer = window.dataLayer || [];
         window.dataLayer.push(['consent','update', payload]);
       }
@@ -60,12 +57,28 @@
     } catch(e){ log('consent mode error', e); }
   }
 
+  // ---------- Placeholder handling ----------
+  // Zeigt Placeholder, solange Kategorie NICHT erlaubt ist; blendet ihn sonst aus
+  function updatePlaceholders(consent){
+    document.querySelectorAll('[wb-cc-placeholder]').forEach(el => {
+      const cat = (el.getAttribute('wb-cc-placeholder') || '').trim().toLowerCase();
+      if (!cat) return;
+      const allowed = consent[cat] === true;
+      // sichtbar wenn NICHT erlaubt
+      el.style.display = allowed ? 'none' : '';
+    });
+    log('placeholders updated');
+  }
+
+  // ---------- Persist + apply ----------
   function saveConsent(){
     setCookie(COOKIE_NAME, JSON.stringify(userConsent), COOKIE_DAYS);
     window.__wbConsent = userConsent; // debug helper
-    // Consent Mode zuerst updaten …
+    // 1) Consent Mode
     gtagConsentUpdateFrom(userConsent);
-    // … dann erlaubte Ressourcen laden
+    // 2) UI Placeholder
+    updatePlaceholders(userConsent);
+    // 3) Erlaubte Ressourcen
     loadAllowedScripts(userConsent);
     loadAllowedIframes(userConsent);
   }
@@ -207,13 +220,14 @@
     if (raw){
       try { userConsent = JSON.parse(raw) || userConsent; } catch(e){ log('parse error', e); }
       hide('[wb-cc="banner"]'); hide('[wb-cc="preferences"]');
-      // Consent Mode sofort mit bestehender Auswahl updaten …
       gtagConsentUpdateFrom(userConsent);
-      // … und erlaubte Ressourcen laden
+      updatePlaceholders(userConsent);
       loadAllowedScripts(userConsent);
       loadAllowedIframes(userConsent);
     } else {
+      // Kein Consent: Banner zeigen + Placeholder sichtbar lassen
       show('[wb-cc="banner"]'); hide('[wb-cc="preferences"]');
+      updatePlaceholders(userConsent);
     }
     makePreferenceButtonsNonSubmitting();
   });
