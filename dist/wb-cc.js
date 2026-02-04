@@ -1,21 +1,24 @@
 /*! wb-cc (c) 2025 WpktBpkt - MIT */
 (function(){
   const ATTR = 'wb-cc';
-  const ACTIONS = new Set([
-    'open-preferences','close','accept-all','accept-necessary','manager','save-preferences'
-  ]);
-
+  const ACTIONS = new Set(['open-preferences','close','accept-all','accept-necessary','manager','save-preferences']);
   const COOKIE_NAME = 'wbCookieConsent';
   const COOKIE_DAYS = 180;
-  const DEBUG = false;
+  const DEBUG = (window.WBCC_DEBUG === true) ? true : false;
   const log = (...a)=>{ if (DEBUG) console.log('[wb-cc]', ...a); };
 
   // Opt-In default
   let userConsent = { marketing:false, personalization:false, analytics:false };
 
   // ---------- UI helpers ----------
-  function show(sel){ const el = document.querySelector(sel); if (el) el.style.display = 'flex'; }
-  function hide(sel){ const el = document.querySelector(sel); if (el) el.style.display = 'none'; }
+  function qs(sel){ return document.querySelector(sel); }
+  function show(sel){ const el = qs(sel); if (el){ el.style.display = getDefaultDisplay(el) || 'flex'; } }
+  function hide(sel){ const el = qs(sel); if (el){ el.style.display = 'none'; } }
+  function getDefaultDisplay(el){
+    // falls per Klasse 'flex' gewünscht ist, nicht auf 'block' zurückfallen
+    const d = window.getComputedStyle(el).display;
+    return (d && d !== 'none') ? d : 'flex';
+  }
 
   // ---------- Cookie ----------
   function setCookie(name, value, days){
@@ -58,27 +61,29 @@
   }
 
   // ---------- Placeholder handling ----------
-  // Zeigt Placeholder, solange Kategorie NICHT erlaubt ist; blendet ihn sonst aus
   function updatePlaceholders(consent){
     document.querySelectorAll('[wb-cc-placeholder]').forEach(el => {
       const cat = (el.getAttribute('wb-cc-placeholder') || '').trim().toLowerCase();
       if (!cat) return;
       const allowed = consent[cat] === true;
-      // sichtbar wenn NICHT erlaubt
-      el.style.display = allowed ? 'none' : '';
+      el.style.display = allowed ? 'none' : ''; // sichtbar ohne Consent, hart verstecken mit Consent
     });
-    log('placeholders updated');
+    log('placeholders updated', consent);
+  }
+
+  // ---------- 3rd-party portals (z.B. Cal) temporär wegblenden, wenn Preferences offen ----------
+  function toggleThirdPartyPortals(show){
+    document.querySelectorAll('#cal-portal, .cal-portal, [data-cal-portal]').forEach(el=>{
+      el.style.display = show ? '' : 'none';
+    });
   }
 
   // ---------- Persist + apply ----------
   function saveConsent(){
     setCookie(COOKIE_NAME, JSON.stringify(userConsent), COOKIE_DAYS);
-    window.__wbConsent = userConsent; // debug helper
-    // 1) Consent Mode
+    window.__wbConsent = userConsent;
     gtagConsentUpdateFrom(userConsent);
-    // 2) UI Placeholder
     updatePlaceholders(userConsent);
-    // 3) Erlaubte Ressourcen
     loadAllowedScripts(userConsent);
     loadAllowedIframes(userConsent);
   }
@@ -107,8 +112,7 @@
     if (ui) ui.classList.toggle('w--redirected-checked', !!checked);
   }
   function syncPreferencesUIFromConsent(){
-    const nodes = document.querySelectorAll('[wb-cc-checkbox]');
-    nodes.forEach(node => {
+    document.querySelectorAll('[wb-cc-checkbox]').forEach(node => {
       const cat = (node.getAttribute('wb-cc-checkbox') || '').trim().toLowerCase();
       const input = resolveCheckbox(node);
       if (!input || !(cat in userConsent)) return;
@@ -117,8 +121,7 @@
     log('synced UI from consent', userConsent);
   }
   function readPreferencesFromUI(){
-    const nodes = document.querySelectorAll('[wb-cc-checkbox]');
-    nodes.forEach(node => {
+    document.querySelectorAll('[wb-cc-checkbox]').forEach(node => {
       const cat = (node.getAttribute('wb-cc-checkbox') || '').trim().toLowerCase();
       const input = resolveCheckbox(node);
       if (!input || !cat) return;
@@ -138,8 +141,7 @@
     return categories.length === 0 || categories.every(cat => consent[cat] === true);
   }
   function loadAllowedScripts(consent){
-    const blocked = document.querySelectorAll('script[type="wb-cc"]');
-    blocked.forEach(srcEl => {
+    document.querySelectorAll('script[type="wb-cc"]').forEach(srcEl => {
       if (srcEl.dataset.wbLoaded === '1') return;
       const cats = parseCategories(srcEl.getAttribute('wb-cc-categories'));
       if (!isAllowed(cats, consent)) return;
@@ -163,8 +165,7 @@
   }
   function loadAllowedIframes(consent){
     // Platzhalter-DIV → echtes iframe
-    const placeholders = document.querySelectorAll('[data-iframe-url][wb-cc-categories]');
-    placeholders.forEach(el => {
+    document.querySelectorAll('[data-iframe-url][wb-cc-categories]').forEach(el => {
       if (el.dataset.wbLoaded === '1') return;
       const cats = parseCategories(el.getAttribute('wb-cc-categories'));
       if (!isAllowed(cats, consent)) return;
@@ -178,8 +179,7 @@
       iframe.height = el.getAttribute('data-iframe-height') || '100%';
       iframe.style.border = '0';
 
-      const attrs = ['allow','allowfullscreen','loading','referrerpolicy','sandbox'];
-      attrs.forEach(a => {
+      ['allow','allowfullscreen','loading','referrerpolicy','sandbox'].forEach(a => {
         const v = el.getAttribute('data-iframe-' + a);
         if (v != null) iframe.setAttribute(a, v === '' ? '' : v);
       });
@@ -191,8 +191,7 @@
     });
 
     // natives <iframe> ohne src, mit data-wb-cc-src
-    const blockedIframes = document.querySelectorAll('iframe[data-wb-cc-src][wb-cc-categories]');
-    blockedIframes.forEach(ifr => {
+    document.querySelectorAll('iframe[data-wb-cc-src][wb-cc-categories]').forEach(ifr => {
       if (ifr.dataset.wbLoaded === '1') return;
       const cats = parseCategories(ifr.getAttribute('wb-cc-categories'));
       if (!isAllowed(cats, consent)) return;
@@ -206,9 +205,21 @@
     });
   }
 
+  // ---------- Portalize cookie UI to <body> (fix stacking contexts) ----------
+  function portalizeToBody(sel, z){
+    const el = qs(sel);
+    if (!el) return;
+    if (el.parentElement !== document.body){
+      document.body.appendChild(el); // an DOM-Ende → über den meisten Portals
+    }
+    el.style.position = el.style.position || 'fixed';
+    if (sel === '[wb-cc="preferences"]'){ el.style.inset = el.style.inset || '0'; }
+    el.style.zIndex = String(z);
+  }
+
   // ---------- Init ----------
   function makePreferenceButtonsNonSubmitting(){
-    const prefs = document.querySelector('[wb-cc="preferences"]');
+    const prefs = qs('[wb-cc="preferences"]');
     if (!prefs) return;
     prefs.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(btn=>{
       btn.setAttribute('type','button');
@@ -216,6 +227,10 @@
   }
 
   document.addEventListener('DOMContentLoaded', function(){
+    // Portalize: über alle Overlays legen
+    portalizeToBody('[wb-cc="preferences"]', 2147483647);
+    portalizeToBody('[wb-cc="banner"]', 2147483646);
+
     const raw = getCookie(COOKIE_NAME);
     if (raw){
       try { userConsent = JSON.parse(raw) || userConsent; } catch(e){ log('parse error', e); }
@@ -225,7 +240,6 @@
       loadAllowedScripts(userConsent);
       loadAllowedIframes(userConsent);
     } else {
-      // Kein Consent: Banner zeigen + Placeholder sichtbar lassen
       show('[wb-cc="banner"]'); hide('[wb-cc="preferences"]');
       updatePlaceholders(userConsent);
     }
@@ -244,26 +258,32 @@
     e.preventDefault();
 
     if (action === 'open-preferences'){
+      toggleThirdPartyPortals(false); // fremde Portale temporär aus
       hide('[wb-cc="banner"]'); syncPreferencesUIFromConsent(); show('[wb-cc="preferences"]');
     }
     if (action === 'manager'){
+      toggleThirdPartyPortals(false);
       syncPreferencesUIFromConsent(); show('[wb-cc="preferences"]');
     }
     if (action === 'close'){
+      toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'accept-all'){
       userConsent = { marketing:true, personalization:true, analytics:true };
       saveConsent();
+      toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'accept-necessary'){
       userConsent = { marketing:false, personalization:false, analytics:false };
       saveConsent();
+      toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'save-preferences'){
       readPreferencesFromUI(); saveConsent();
+      toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
   });
