@@ -1,4 +1,4 @@
-/*! wb-cc (c) 2025 WpktBpkt - MIT */
+/*! wb-cc (c) 2025 WpktBpkt - MIT — v0.3.2 */
 (function(){
   const ATTR = 'wb-cc';
   const ACTIONS = new Set(['open-preferences','close','accept-all','accept-necessary','manager','save-preferences']);
@@ -11,14 +11,13 @@
   let userConsent = { marketing:false, personalization:false, analytics:false };
 
   // ---------- UI helpers ----------
-  function qs(sel){ return document.querySelector(sel); }
-  function show(sel){ const el = qs(sel); if (el){ el.style.display = getDefaultDisplay(el) || 'flex'; } }
-  function hide(sel){ const el = qs(sel); if (el){ el.style.display = 'none'; } }
+  const qs = sel => document.querySelector(sel);
   function getDefaultDisplay(el){
-    // falls per Klasse 'flex' gewünscht ist, nicht auf 'block' zurückfallen
     const d = window.getComputedStyle(el).display;
     return (d && d !== 'none') ? d : 'flex';
   }
+  function show(sel){ const el = qs(sel); if (el){ el.style.display = getDefaultDisplay(el); } }
+  function hide(sel){ const el = qs(sel); if (el){ el.style.display = 'none'; } }
 
   // ---------- Cookie ----------
   function setCookie(name, value, days){
@@ -70,8 +69,25 @@
     });
     log('placeholders updated', consent);
   }
+  function tempHidePlaceholders(hideAll){
+    document.querySelectorAll('[wb-cc-placeholder]').forEach(el => {
+      if (hideAll){
+        if (!el.dataset._wbPrevVis) el.dataset._wbPrevVis = el.style.visibility || '';
+        el.style.visibility = 'hidden';
+        el.style.pointerEvents = 'none';
+      } else {
+        if (el.dataset._wbPrevVis != null){
+          el.style.visibility = el.dataset._wbPrevVis;
+          delete el.dataset._wbPrevVis;
+        } else {
+          el.style.visibility = '';
+        }
+        el.style.pointerEvents = '';
+      }
+    });
+  }
 
-  // ---------- 3rd-party portals (z.B. Cal) temporär wegblenden, wenn Preferences offen ----------
+  // ---------- 3rd-party portals (z.B. Cal) temporär ausblenden, wenn Preferences offen ----------
   function toggleThirdPartyPortals(show){
     document.querySelectorAll('#cal-portal, .cal-portal, [data-cal-portal]').forEach(el=>{
       el.style.display = show ? '' : 'none';
@@ -210,7 +226,7 @@
     const el = qs(sel);
     if (!el) return;
     if (el.parentElement !== document.body){
-      document.body.appendChild(el); // an DOM-Ende → über den meisten Portals
+      document.body.appendChild(el);
     }
     el.style.position = el.style.position || 'fixed';
     if (sel === '[wb-cc="preferences"]'){ el.style.inset = el.style.inset || '0'; }
@@ -227,7 +243,6 @@
   }
 
   document.addEventListener('DOMContentLoaded', function(){
-    // Portalize: über alle Overlays legen
     portalizeToBody('[wb-cc="preferences"]', 2147483647);
     portalizeToBody('[wb-cc="banner"]', 2147483646);
 
@@ -258,31 +273,43 @@
     e.preventDefault();
 
     if (action === 'open-preferences'){
-      toggleThirdPartyPortals(false); // fremde Portale temporär aus
+      document.documentElement.classList.add('wb-cc-open');
+      tempHidePlaceholders(true);           // <— NEU: Placeholders temporär verstecken
+      toggleThirdPartyPortals(false);
       hide('[wb-cc="banner"]'); syncPreferencesUIFromConsent(); show('[wb-cc="preferences"]');
     }
     if (action === 'manager'){
+      document.documentElement.classList.add('wb-cc-open');
+      tempHidePlaceholders(true);
       toggleThirdPartyPortals(false);
       syncPreferencesUIFromConsent(); show('[wb-cc="preferences"]');
     }
     if (action === 'close'){
+      document.documentElement.classList.remove('wb-cc-open');
+      tempHidePlaceholders(false);          // <— NEU: Placeholders wieder zeigen (falls weiter nötig)
       toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'accept-all'){
       userConsent = { marketing:true, personalization:true, analytics:true };
       saveConsent();
+      document.documentElement.classList.remove('wb-cc-open');
+      tempHidePlaceholders(false);
       toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'accept-necessary'){
       userConsent = { marketing:false, personalization:false, analytics:false };
       saveConsent();
+      document.documentElement.classList.remove('wb-cc-open');
+      tempHidePlaceholders(false);
       toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'save-preferences'){
       readPreferencesFromUI(); saveConsent();
+      document.documentElement.classList.remove('wb-cc-open');
+      tempHidePlaceholders(false);
       toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
