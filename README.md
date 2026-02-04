@@ -15,7 +15,7 @@ Features
 ### 1) Include the script (CDN)
 
 Webflow Project Settings → Custom Code → Footer:
-<script defer src="https://cdn.jsdelivr.net/gh/WpktBpkt/wb-cc@v0.3.0/dist/wb-cc.js"></script>
+<script defer src="https://cdn.jsdelivr.net/gh/WpktBpkt/wb-cc@v0.3.1/dist/wb-cc.js"></script>
 
 | Use versioned tags like @v0.3.0 for production. @main is fine for quick tests.
 
