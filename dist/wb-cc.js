@@ -1,4 +1,4 @@
-/*! wb-cc (c) 2025 WpktBpkt - MIT — v0.3.2 */
+/*! wb-cc (c) 2025 WpktBpkt - MIT — v0.3.3 */
 (function(){
   const ATTR = 'wb-cc';
   const ACTIONS = new Set(['open-preferences','close','accept-all','accept-necessary','manager','save-preferences']);
@@ -16,8 +16,16 @@
     const d = window.getComputedStyle(el).display;
     return (d && d !== 'none') ? d : 'flex';
   }
-  function show(sel){ const el = qs(sel); if (el){ el.style.display = getDefaultDisplay(el); } }
-  function hide(sel){ const el = qs(sel); if (el){ el.style.display = 'none'; } }
+  function isDialog(el){ return el && el.nodeName === 'DIALOG'; }
+  function show(sel){
+    const el = qs(sel); if (!el) return;
+    if (isDialog(el)) { if (!el.open) el.showModal(); }
+    else { el.style.display = getDefaultDisplay(el); }
+  }
+  function hide(sel){
+    const el = qs(sel); if (!el) return;
+    if (isDialog(el)) el.close(); else el.style.display = 'none';
+  }
 
   // ---------- Cookie ----------
   function setCookie(name, value, days){
@@ -65,7 +73,7 @@
       const cat = (el.getAttribute('wb-cc-placeholder') || '').trim().toLowerCase();
       if (!cat) return;
       const allowed = consent[cat] === true;
-      el.style.display = allowed ? 'none' : ''; // sichtbar ohne Consent, hart verstecken mit Consent
+      el.style.display = allowed ? 'none' : '';
     });
     log('placeholders updated', consent);
   }
@@ -77,17 +85,43 @@
         el.style.pointerEvents = 'none';
       } else {
         if (el.dataset._wbPrevVis != null){
-          el.style.visibility = el.dataset._wbPrevVis;
-          delete el.dataset._wbPrevVis;
-        } else {
-          el.style.visibility = '';
-        }
+          el.style.visibility = el.dataset._wbPrevVis; delete el.dataset._wbPrevVis;
+        } else { el.style.visibility = ''; }
         el.style.pointerEvents = '';
       }
     });
   }
 
-  // ---------- 3rd-party portals (z.B. Cal) temporär ausblenden, wenn Preferences offen ----------
+  // ---------- Site modals/overlays hart schließen ----------
+  // Passe die Selektoren bei Bedarf an dein Setup an:
+  const MODAL_SELECTORS = [
+    '#cal-portal', '.cal-portal', '[data-cal-portal]',
+    '.modal', '[data-modal]', '[role="dialog"]',
+    '.w-lightbox-backdrop', '.w-lightbox-container'
+  ];
+  function closeAllSiteModals(){
+    // 1) Native <dialog> (nicht unser Cookie-Dialog)
+    document.querySelectorAll('dialog[open]').forEach(d => {
+      if (d.matches('[wb-cc="preferences"]')) return;
+      try { d.close(); } catch(_){}
+    });
+    // 2) Häufige Modal/Overlay-Container
+    document.querySelectorAll(MODAL_SELECTORS.join(',')).forEach(el => {
+      if (!el || el.closest('[wb-cc="preferences"]')) return;
+      // Klassen, die oft "offen" bedeuten
+      ['is-open','open','active','visible','show'].forEach(cls => el.classList.remove(cls));
+      // ARIA state
+      if (el.getAttribute && el.getAttribute('aria-hidden') === 'false') el.setAttribute('aria-hidden','true');
+      // Sichtbarkeit knipsen
+      el.style.display = 'none';
+    });
+    // 3) Body Lock rückgängig machen
+    document.body.style.overflow = '';
+    document.body.style.paddingRight = '';
+    log('closed all site modals/overlays');
+  }
+
+  // ---------- Drittanbieter-Portale (z. B. Cal) nur temporär ausblenden ----------
   function toggleThirdPartyPortals(show){
     document.querySelectorAll('#cal-portal, .cal-portal, [data-cal-portal]').forEach(el=>{
       el.style.display = show ? '' : 'none';
@@ -149,9 +183,7 @@
   // ---------- Blocking engine ----------
   function parseCategories(attr){
     return (attr || '')
-      .split(',')
-      .map(s => s.trim().toLowerCase())
-      .filter(Boolean);
+      .split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
   }
   function isAllowed(categories, consent){
     return categories.length === 0 || categories.every(cat => consent[cat] === true);
@@ -180,7 +212,6 @@
     });
   }
   function loadAllowedIframes(consent){
-    // Platzhalter-DIV → echtes iframe
     document.querySelectorAll('[data-iframe-url][wb-cc-categories]').forEach(el => {
       if (el.dataset.wbLoaded === '1') return;
       const cats = parseCategories(el.getAttribute('wb-cc-categories'));
@@ -206,7 +237,6 @@
       log('mounted iframe (placeholder)', url);
     });
 
-    // natives <iframe> ohne src, mit data-wb-cc-src
     document.querySelectorAll('iframe[data-wb-cc-src][wb-cc-categories]').forEach(ifr => {
       if (ifr.dataset.wbLoaded === '1') return;
       const cats = parseCategories(ifr.getAttribute('wb-cc-categories'));
@@ -221,13 +251,10 @@
     });
   }
 
-  // ---------- Portalize cookie UI to <body> (fix stacking contexts) ----------
+  // ---------- Portalize cookie UI to <body> ----------
   function portalizeToBody(sel, z){
-    const el = qs(sel);
-    if (!el) return;
-    if (el.parentElement !== document.body){
-      document.body.appendChild(el);
-    }
+    const el = qs(sel); if (!el) return;
+    if (el.parentElement !== document.body){ document.body.appendChild(el); }
     el.style.position = el.style.position || 'fixed';
     if (sel === '[wb-cc="preferences"]'){ el.style.inset = el.style.inset || '0'; }
     el.style.zIndex = String(z);
@@ -261,12 +288,14 @@
     makePreferenceButtonsNonSubmitting();
   });
 
+  // Block submits im Preferences-Modal
   document.addEventListener('submit', function(e){
     if (e.target?.closest?.('[wb-cc="preferences"]')) {
       e.preventDefault(); e.stopPropagation(); log('blocked submit');
     }
   }, true);
 
+  // Actions
   document.addEventListener('click', function(e){
     const el = e.target?.closest?.('[wb-cc]'); if (!el) return;
     const action = el.getAttribute(ATTR); if (!ACTIONS.has(action)) return;
@@ -274,19 +303,21 @@
 
     if (action === 'open-preferences'){
       document.documentElement.classList.add('wb-cc-open');
-      tempHidePlaceholders(true);           // <— NEU: Placeholders temporär verstecken
+      tempHidePlaceholders(true);
+      closeAllSiteModals();          // <— alle Site-Modals schließen
       toggleThirdPartyPortals(false);
       hide('[wb-cc="banner"]'); syncPreferencesUIFromConsent(); show('[wb-cc="preferences"]');
     }
     if (action === 'manager'){
       document.documentElement.classList.add('wb-cc-open');
       tempHidePlaceholders(true);
+      closeAllSiteModals();
       toggleThirdPartyPortals(false);
       syncPreferencesUIFromConsent(); show('[wb-cc="preferences"]');
     }
     if (action === 'close'){
       document.documentElement.classList.remove('wb-cc-open');
-      tempHidePlaceholders(false);          // <— NEU: Placeholders wieder zeigen (falls weiter nötig)
+      tempHidePlaceholders(false);
       toggleThirdPartyPortals(true);
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
