@@ -1,24 +1,59 @@
-/*! wb-cc (c) 2025 WpktBpkt - MIT — v0.3.5 (safe mode) */
+<script>
+/*! wb-cc (c) 2025 WpktBpkt - MIT — v0.3.5a (safe dialog fix) */
 (function(){
   const ATTR = 'wb-cc';
   const ACTIONS = new Set(['open-preferences','close','accept-all','accept-necessary','manager','save-preferences']);
+
   const COOKIE_NAME = 'wbCookieConsent';
   const COOKIE_DAYS = 180;
+
   const DEBUG = (window.WBCC_DEBUG === true);
   const log = (...a)=>{ if (DEBUG) console.log('[wb-cc]', ...a); };
 
+  // Opt-in Default
   let userConsent = { marketing:false, personalization:false, analytics:false };
 
   // ---------- DOM helpers ----------
   const qs = sel => document.querySelector(sel);
   const qsa = sel => Array.from(document.querySelectorAll(sel));
   const isDialog = el => el && el.nodeName === 'DIALOG';
-  function getDefaultDisplay(el){ const d = getComputedStyle(el).display; return (d && d !== 'none') ? d : 'flex'; }
-  function show(sel){ const el = qs(sel); if (!el) return; if (isDialog(el)) { if (!el.open) el.showModal(); } else { el.style.display = getDefaultDisplay(el); } }
-  function hide(sel){ const el = qs(sel); if (!el) return; if (isDialog(el)) el.close(); else el.style.display = 'none'; }
 
-  // ---------- Cookie ----------
-  function setCookie(n, v, d){ const t=new Date(); t.setDate(t.getDate()+d); document.cookie=`${n}=${encodeURIComponent(v)}; expires=${t.toUTCString()}; path=/;`; }
+  function getDefaultDisplay(el){
+    const d = getComputedStyle(el).display;
+    return (d && d !== 'none') ? d : 'flex';
+  }
+
+  // FIX: Dialog vor showModal() sichtbar schalten
+  function show(sel){
+    const el = qs(sel);
+    if (!el) return;
+    if (isDialog(el)) {
+      // falls irgendwo display:none gesetzt war, neutralisieren
+      el.style.display = '';
+      if (!el.open) {
+        try { el.showModal(); } catch(e){ try { el.show(); } catch(_){} }
+      }
+    } else {
+      el.style.display = getDefaultDisplay(el);
+    }
+  }
+
+  function hide(sel){
+    const el = qs(sel);
+    if (!el) return;
+    if (isDialog(el)) {
+      try { el.close(); } catch(_){}
+      // kein display:none setzen – CSS :not([open]) übernimmt das Hiden
+    } else {
+      el.style.display = 'none';
+    }
+  }
+
+  // ---------- Cookies ----------
+  function setCookie(n, v, d){
+    const t=new Date(); t.setDate(t.getDate()+d);
+    document.cookie=`${n}=${encodeURIComponent(v)}; expires=${t.toUTCString()}; path=/;`;
+  }
   function getCookie(n){
     const parts=(document.cookie||'').split(';');
     for (const p of parts){ const c=p.trim(); if (c.indexOf(n+'=')===0) return decodeURIComponent(c.substring(n.length+1)); }
@@ -63,11 +98,10 @@
     });
   }
 
-  // ---------- Reversibles „Modal-Hiding“ (Safe-Selectors) ----------
-  // Wir zielen nur auf die üblichen „Portal“-Container & Lumos-Overlays.
+  // ---------- Reversible Modal-Hiding (Lumos/Cal/Overlays) ----------
   const HIDE_SELECTORS = [
     '#cal-portal', '.cal-portal', '[data-cal-portal]',
-    '[data-modal-overlay]', '[data-modal]' // Lumos
+    '[data-modal-overlay]', '[data-modal]'
   ];
   function hideSiteModals(){
     HIDE_SELECTORS.forEach(sel=>{
@@ -77,12 +111,11 @@
         el.style.display = 'none';
       });
     });
-    // Body lock vorsichtig lösen (falls gesetzt)
     if (document.body.dataset.wbccPrevOverflow == null) document.body.dataset.wbccPrevOverflow = document.body.style.overflow || '';
     if (document.body.dataset.wbccPrevPadR   == null) document.body.dataset.wbccPrevPadR   = document.body.style.paddingRight || '';
     document.body.style.overflow = '';
     document.body.style.paddingRight = '';
-    log('hideSiteModals (reversible) done');
+    log('hideSiteModals (reversible)');
   }
   function restoreSiteModals(){
     HIDE_SELECTORS.forEach(sel=>{
@@ -90,9 +123,7 @@
         if (el.dataset.wbccPrevDisplay != null){
           el.style.display = el.dataset.wbccPrevDisplay;
           delete el.dataset.wbccPrevDisplay;
-        } else {
-          el.style.display = ''; // Fallback
-        }
+        } else el.style.display = '';
       });
     });
     if (document.body.dataset.wbccPrevOverflow != null){
@@ -103,10 +134,8 @@
       document.body.style.paddingRight = document.body.dataset.wbccPrevPadR;
       delete document.body.dataset.wbccPrevPadR;
     }
-    log('restoreSiteModals done');
+    log('restoreSiteModals');
   }
-
-  // ---------- Drittanbieter-Portale optional temporär ausblenden ----------
   function toggleThirdPartyPortals(show){
     qsa('#cal-portal, .cal-portal, [data-cal-portal]').forEach(el=>{
       el.style.display = show ? '' : 'none';
@@ -123,13 +152,13 @@
     loadAllowedIframes(userConsent);
   }
 
-  // ---------- Webflow checkbox sync ----------
+  // ---------- Webflow Checkbox-Sync ----------
   function resolveCheckbox(el){ if (!el) return null; if (el.matches && el.matches('input[type="checkbox"]')) return el; return el.querySelector ? el.querySelector('input[type="checkbox"]') : null; }
   function findCustomUIFor(input){
     if (!input) return null;
-    const label = input.closest('label, .w-checkbox, .w-form-formcheckbox, .w-switch');
-    if (label){
-      const ui = label.querySelector('.w-checkbox-input, .w-checkbox-input--inputType-custom, .w-switch-input, [class*="w-checkbox-input"]');
+    const wrap = input.closest('label, .w-checkbox, .w-form-formcheckbox, .w-switch');
+    if (wrap){
+      const ui = wrap.querySelector('.w-checkbox-input, .w-checkbox-input--inputType-custom, .w-switch-input, [class*="w-checkbox-input"]');
       if (ui) return ui;
     }
     const n = input.nextElementSibling;
@@ -162,6 +191,7 @@
   // ---------- Blocking engine ----------
   function parseCategories(a){ return (a||'').split(',').map(s=>s.trim().toLowerCase()).filter(Boolean); }
   function isAllowed(cats, c){ return cats.length===0 || cats.every(cat=>c[cat]===true); }
+
   function loadAllowedScripts(c){
     qsa('script[type="wb-cc"]').forEach(srcEl=>{
       if (srcEl.dataset.wbLoaded==='1') return;
@@ -171,18 +201,22 @@
       if (srcEl.src){ s.src=srcEl.src; if (srcEl.async) s.async=true; if (srcEl.defer) s.defer=true; }
       else { s.text = srcEl.textContent || ''; }
       if (srcEl.id) s.id = srcEl.id;
-      for (const {name,value} of Array.from(srcEl.attributes)){ if (name.startsWith('data-') && name!=='data-wb-loaded') s.setAttribute(name,value); }
+      for (const {name,value} of Array.from(srcEl.attributes)){
+        if (name.startsWith('data-') && name!=='data-wb-loaded') s.setAttribute(name,value);
+      }
       srcEl.dataset.wbLoaded='1';
       (document.head||document.body).appendChild(s);
       log('loaded 3rd script', s.src||'[inline]');
     });
   }
+
   function loadAllowedIframes(c){
     qsa('[data-iframe-url][wb-cc-categories]').forEach(el=>{
       if (el.dataset.wbLoaded==='1') return;
       const cats=parseCategories(el.getAttribute('wb-cc-categories'));
       if (!isAllowed(cats,c)) return;
       const url=el.getAttribute('data-iframe-url'); if (!url) return;
+
       const iframe=document.createElement('iframe');
       iframe.src=url;
       iframe.width=el.getAttribute('data-iframe-width')||'100%';
@@ -196,6 +230,7 @@
       el.dataset.wbLoaded='1';
       log('mounted iframe (placeholder)', url);
     });
+
     qsa('iframe[data-wb-cc-src][wb-cc-categories]').forEach(ifr=>{
       if (ifr.dataset.wbLoaded==='1') return;
       const cats=parseCategories(ifr.getAttribute('wb-cc-categories'));
@@ -216,12 +251,12 @@
     el.style.zIndex = String(z);
   }
 
-  // ---------- Init ----------
   function makePreferenceButtonsNonSubmitting(){
     const prefs=qs('[wb-cc="preferences"]'); if (!prefs) return;
     prefs.querySelectorAll('button[type="submit"], input[type="submit"]').forEach(btn=>btn.setAttribute('type','button'));
   }
 
+  // ---------- Init ----------
   document.addEventListener('DOMContentLoaded', function(){
     portalizeToBody('[wb-cc="preferences"]', 2147483647);
     portalizeToBody('[wb-cc="banner"]', 2147483646);
@@ -234,19 +269,22 @@
       updatePlaceholders(userConsent);
       loadAllowedScripts(userConsent);
       loadAllowedIframes(userConsent);
+      log('init with cookie', userConsent);
     } else {
-      show('[wb-cc="banner"]'); hide('[wb-cc="preferences"]');
+      show('[wb-cc="banner"]');
+      hide('[wb-cc="preferences"]');
       updatePlaceholders(userConsent);
+      log('init first visit — banner shown');
     }
     makePreferenceButtonsNonSubmitting();
   });
 
-  // block submits im Preferences-Modal
+  // block submit in Preferences
   document.addEventListener('submit', function(e){
     if (e.target?.closest?.('[wb-cc="preferences"]')){ e.preventDefault(); e.stopPropagation(); }
   }, true);
 
-  // Actions
+  // ---------- Actions ----------
   document.addEventListener('click', function(e){
     const el = e.target?.closest?.('[wb-cc]'); if (!el) return;
     const action = el.getAttribute(ATTR); if (!ACTIONS.has(action)) return;
@@ -254,7 +292,7 @@
 
     if (action === 'open-preferences'){
       tempHidePlaceholders(true);
-      hideSiteModals();             // reversible hide (nur bekannte Selektoren)
+      hideSiteModals();
       toggleThirdPartyPortals(false);
       hide('[wb-cc="banner"]');
       syncPreferencesUIFromConsent();
@@ -270,7 +308,7 @@
     if (action === 'close'){
       tempHidePlaceholders(false);
       toggleThirdPartyPortals(true);
-      restoreSiteModals();          // alles zurück
+      restoreSiteModals();
       hide('[wb-cc="preferences"]'); hide('[wb-cc="banner"]');
     }
     if (action === 'accept-all'){
@@ -298,3 +336,4 @@
     }
   });
 })();
+</script>
